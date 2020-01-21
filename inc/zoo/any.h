@@ -1,7 +1,10 @@
-#pragma once
+#ifndef ZOO_ANY
+#define ZOO_ANY
 
+#include <zoo/PolymorphicContainer.h>
 #include <zoo/utility.h>
-#include "meta/NotBasedOn.h"
+#include "zoo/meta/NotBasedOn.h"
+#include "zoo/meta/copy_and_move_abilities.h"
 
 #ifndef OLD_COMPILER
 #ifndef SIMPLIFY_PREPROCESSING
@@ -18,7 +21,7 @@ in_place_type_t<T> in_place_type;
 
 }
 #endif
-#include "meta/InplaceType.h"
+#include "zoo/meta/InplaceType.h"
 
 #ifndef SIMPLIFY_PREPROCESSING
 #include <new>
@@ -28,157 +31,21 @@ in_place_type_t<T> in_place_type;
 
 namespace zoo {
 
-template<int Size, int Alignment>
-struct IAnyContainer {
-    virtual void destroy() {}
-    virtual void copy(IAnyContainer *to) { new(to) IAnyContainer; }
-    virtual void move(IAnyContainer *to) noexcept { new(to) IAnyContainer; }
-
-    /// Note: it is a fatal error to call the destructor after moveAndDestroy
-    virtual void moveAndDestroy(IAnyContainer *to) noexcept {
-        new(to) IAnyContainer;
-    }
-    virtual void *value() noexcept { return nullptr; }
-    virtual bool nonEmpty() const noexcept { return false; }
-    virtual const std::type_info &type() const noexcept { return typeid(void); }
-
-    alignas(Alignment)
-    char m_space[Size];
-
-    using NONE = void (IAnyContainer::*)();
-    constexpr static NONE None = nullptr;
-};
-
-template<int Size, int Alignment>
-struct BaseContainer: IAnyContainer<Size, Alignment> {
-    bool nonEmpty() const noexcept { return true; }
-};
-
-template<int Size, int Alignment, typename ValueType>
-struct ValueContainer: BaseContainer<Size, Alignment> {
-    using IAC = IAnyContainer<Size, Alignment>;
-
-    ValueType *thy() { return reinterpret_cast<ValueType *>(this->m_space); }
-
-    ValueContainer(typename IAC::NONE) {}
-
-    template<typename... Args>
-    ValueContainer(Args &&... args) {
-        new(this->m_space) ValueType{std::forward<Args>(args)...};
-    }
-
-    void destroy() override { thy()->~ValueType(); }
-
-    void copy(IAC *to) override { new(to) ValueContainer{*thy()}; }
-
-    void move(IAC *to) noexcept override {
-        new(to) ValueContainer{std::move(*thy())};
-    }
-
-    void moveAndDestroy(IAC *to) noexcept override {
-        ValueContainer::move(to);
-        ValueContainer::destroy();
-            // note: the full qualification prevents the penalty of dynamic
-            // dispatch
-    }
-
-    void *value() noexcept override { return thy(); }
-
-    const std::type_info &type() const noexcept override {
-        return typeid(ValueType);
-    }
-};
-
-template<int Size, int Alignment, typename ValueType>
-struct ReferentialContainer: BaseContainer<Size, Alignment> {
-    using IAC = IAnyContainer<Size, Alignment>;
-
-    ValueType **pThy() {
-        return reinterpret_cast<ValueType **>(this->m_space);
-    }
-
-    ValueType *thy() { return *pThy(); }
-
-    ReferentialContainer(typename IAC::NONE) {}
-
-    template<typename... Values>
-    ReferentialContainer(Values &&... values) {
-        *pThy() = new ValueType{std::forward<Values>(values)...};
-    }
-
-    ReferentialContainer(typename IAC::NONE, ValueType *ptr) { *pThy() = ptr; }
-
-    void destroy() override { delete thy(); }
-
-    void copy(IAC *to) override { new(to) ReferentialContainer{*thy()}; }
-
-    void transferPointer(IAC *to) {
-        new(to) ReferentialContainer{IAC::None, thy()};
-    }
-
-    void move(IAC *to) noexcept override {
-        new(to) ReferentialContainer{IAC::None, thy()};
-        new(this) IAnyContainer<Size, Alignment>;
-    }
-
-    void moveAndDestroy(IAC *to) noexcept override {
-        transferPointer(to);
-    }
-
-    void *value() noexcept override { return thy(); }
-
-    const std::type_info &type() const noexcept override {
-        return typeid(ValueType);
-    }
-};
-
-template<int Size, int Alignment, typename ValueType, bool Value>
-struct RuntimePolymorphicAnyPolicyDecider {
-    using type = ReferentialContainer<Size, Alignment, ValueType>;
-};
-
-template<int Size, int Alignment, typename ValueType>
-struct RuntimePolymorphicAnyPolicyDecider<Size, Alignment, ValueType, true> {
-    using type = ValueContainer<Size, Alignment, ValueType>;
-};
-
-template<typename ValueType>
-constexpr bool canUseValueSemantics(int size, int alignment) {
-    return
-        alignment % alignof(ValueType) == 0 &&
-        sizeof(ValueType) <= size &&
-        std::is_nothrow_move_constructible<ValueType>::value;
-}
-
-template<int Size, int Alignment>
-struct RuntimePolymorphicAnyPolicy {
-    using MemoryLayout = IAnyContainer<Size, Alignment>;
-
-    template<typename ValueType>
-    using Builder =
-        typename RuntimePolymorphicAnyPolicyDecider<
-            Size,
-            Alignment,
-            ValueType,
-            canUseValueSemantics<ValueType>(Size, Alignment)
-        >::type;
-};
-
 template<typename Policy>
-struct AnyContainer {
+struct AnyContainerBase {
     using Container = typename Policy::MemoryLayout;
 
     alignas(alignof(Container))
     char m_space[sizeof(Container)];
 
-    AnyContainer() noexcept { new(m_space) Container; }
+    AnyContainerBase() noexcept { new(m_space) Container; }
 
-    AnyContainer(const AnyContainer &model) {
+    AnyContainerBase(const AnyContainerBase &model) {
         auto source = model.container();
         source->copy(container());
     }
 
-    AnyContainer(AnyContainer &&moveable) noexcept {
+    AnyContainerBase(AnyContainerBase &&moveable) noexcept {
         auto source = moveable.container();
         source->move(container());
     }
@@ -187,12 +54,12 @@ struct AnyContainer {
         typename Initializer,
         typename Decayed = std::decay_t<Initializer>,
         std::enable_if_t<
-            meta::NotBasedOn<Initializer, AnyContainer>() &&
+            meta::NotBasedOn<Initializer, AnyContainerBase>() &&
                 std::is_copy_constructible<Decayed>::value &&
                 !meta::InplaceType<Initializer>::value,
         int> = 0
     >
-    AnyContainer(Initializer &&initializer) {
+    AnyContainerBase(Initializer &&initializer) {
         using Implementation = typename Policy::template Builder<Decayed>;
         new(m_space) Implementation(std::forward<Initializer>(initializer));
     }
@@ -207,7 +74,7 @@ struct AnyContainer {
             int
         > = 0
     >
-    AnyContainer(std::in_place_type_t<ValueType>, Initializers &&...izers) {
+    AnyContainerBase(std::in_place_type_t<ValueType>, Initializers &&...izers) {
         using Implementation = typename Policy::template Builder<Decayed>;
         new(m_space) Implementation(std::forward<Initializers>(izers)...);
     }
@@ -225,7 +92,7 @@ struct AnyContainer {
             int
         > = 0
     >
-    AnyContainer(
+    AnyContainerBase(
         std::in_place_type_t<ValueType>,
         std::initializer_list<UL> il,
         Args &&... args
@@ -234,16 +101,16 @@ struct AnyContainer {
         new(m_space) Implementation(il, std::forward<Args>(args)...);
     }
 
-    ~AnyContainer() { container()->destroy(); }
+    ~AnyContainerBase() { container()->destroy(); }
 
-    AnyContainer &operator=(const AnyContainer &model) {
+    AnyContainerBase &operator=(const AnyContainerBase &model) {
         auto myself = container();
         myself->destroy();
         model.container()->copy(myself);
         return *this;
     }
 
-    AnyContainer &operator=(AnyContainer &&moveable) noexcept {
+    AnyContainerBase &operator=(AnyContainerBase &&moveable) noexcept {
         auto myself = container();
         myself->destroy();
         moveable.container()->move(myself);
@@ -253,11 +120,11 @@ struct AnyContainer {
     template<
         typename Argument,
         std::enable_if_t<
-            meta::NotBasedOn<Argument, AnyContainer>(),
+            meta::NotBasedOn<Argument, AnyContainerBase>(),
             int
         > = 0
     >
-    AnyContainer &operator=(Argument &&argument) {
+    AnyContainerBase &operator=(Argument &&argument) {
         emplace_impl<Argument>(std::forward<Argument>(argument));
         return *this;
     }
@@ -292,7 +159,7 @@ protected:
     template<typename ValueType, typename... Arguments>
     void emplace_impl(Arguments  &&... arguments) {
         container()->destroy();
-        new(this) AnyContainer(
+        new(this) AnyContainerBase(
             std::in_place_type<std::decay_t<ValueType>>,
             std::forward<Arguments>(arguments)...
         );
@@ -301,7 +168,7 @@ protected:
     template<typename ValueType, typename U, typename... Arguments>
     void emplace_impl(std::initializer_list<U> &il, Arguments &&... args) {
         container()->destroy();
-        new(this) AnyContainer(
+        new(this) AnyContainerBase(
             std::in_place_type<std::decay_t<ValueType>>,
             il,
             std::forward<Arguments>(args)...
@@ -311,10 +178,10 @@ protected:
 public:
     void reset() noexcept {
         container()->destroy();
-        new(this) AnyContainer;
+        new(this) AnyContainerBase;
     }
 
-    void swap(AnyContainer &other) noexcept {
+    void swap(AnyContainerBase &other) noexcept {
         auto oc = other.container();
 
         alignas(alignof(Container))
@@ -349,12 +216,38 @@ public:
 
     template<typename ValueType>
     const ValueType *state() const noexcept {
-        return const_cast<AnyContainer *>(this)->state<ValueType>();
+        return const_cast<AnyContainerBase *>(this)->state<ValueType>();
     }
 
     Container *container() const {
         return reinterpret_cast<Container *>(const_cast<char *>(m_space));
     }
+};
+
+namespace impl {
+
+template<auto Value, typename... Expected>
+struct CorrectType:
+    std::disjunction<std::is_same<decltype(Value), Expected>...>
+{};
+
+template<typename T>
+struct HasCopy:
+    CorrectType<&T::copy, void (T::*)(T *), void (T::*)(T *) const>
+{};
+
+}
+
+template<typename Policy>
+struct AnyContainer:
+    AnyContainerBase<Policy>,
+    meta::CopyAndMoveAbilities<
+        impl::HasCopy<typename Policy::MemoryLayout>::value
+    >
+{
+    using Base = AnyContainerBase<Policy>;
+    using Base::AnyContainerBase;
+    using Base::operator=;
 };
 
 template<typename Policy>
@@ -431,4 +324,5 @@ typename Policy::Visit *visits(const AnyContainer<Policy> &a) {
 
 }
 
-/// \todo guarantee alignment new, tests
+#endif
+

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zoo/ExtendedAny.h>
+#include "any.h"
 
 #include <catch2/catch.hpp>
 
@@ -41,7 +41,7 @@ struct TakesInitializerList {
     int s;
     double v;
     TakesInitializerList(std::initializer_list<int> il, double val):
-        s(il.size()), v(val)
+        s(int(il.size())), v(val)
     {}
 };
 
@@ -52,23 +52,18 @@ struct TwoArgumentConstructor {
     TwoArgumentConstructor(void *p, int q): boolean(p), value(q) {};
 };
 
-template<typename>
-void movedFromTest(zoo::Any &a) {
-    auto ac = a.container();
-        // strange warning
-        // warning: expression with side effects
-        // will be evaluated despite being used as an operand to 'typeid'
-        // [-Wpotentially-evaluated-expression]
-    CHECK(typeid(*ac) == typeid(zoo::Any::Container));
-}
-
-template<typename W, int S, int A>
-void movedFromTest(zoo::AnyContainer<zoo::ConverterPolicy<S, A>> &a) {
-    CHECK(nullptr == zoo::anyContainerCast<W>(&a));
-}
-
 template<typename ExtAny>
 void testAnyImplementation() {
+    static_assert(
+        std::is_same_v<
+            ExtAny &,
+            decltype(std::declval<ExtAny &>() = std::declval<ExtAny &&>())
+        >, "the move-assignment operator must return the container reference"
+    );
+    static_assert(
+        noexcept(std::declval<ExtAny &>() = std::declval<ExtAny &&>())
+    );
+
     SECTION("Value Destruction") {
         int value;
         {
@@ -119,7 +114,6 @@ void testAnyImplementation() {
         auto afterMove = zoo::anyContainerCast<Big>(&movingTo);
         CHECK(!movingFrom.has_value());
         REQUIRE(original == afterMove);
-        movedFromTest<Moves>(movingFrom);
     }
     SECTION("Initializer constructor -- copying") {
         Moves value;

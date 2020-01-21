@@ -1,7 +1,7 @@
 #ifndef ZOO_ANY_CALLABLE
 #define ZOO_ANY_CALLABLE
 
-#include <meta/NotBasedOn.h>
+#include "zoo/meta/NotBasedOn.h"
 
 #ifndef SIMPLIFY_PREPROCESSING
 #include <type_traits>
@@ -30,18 +30,30 @@ template<typename TypeErasureProvider, typename R, typename... Args>
 struct AnyCallable<TypeErasureProvider, R(Args...)>: TypeErasureProvider {
     AnyCallable(): targetInvoker_{emptyInvoker} {}
 
+    AnyCallable(std::nullptr_t): AnyCallable() {}
+
     template<
         typename Callable,
         typename Decayed =
             std::enable_if_t<
                 meta::NotBasedOn<Callable, AnyCallable>(),
                 std::decay_t<Callable>
-            >
+            >,
+        typename = decltype(std::declval<Decayed>()(std::declval<Args>()...))
     >
     AnyCallable(Callable &&target):
         TypeErasureProvider{std::forward<Callable>(target)},
         targetInvoker_{invokeTarget<Decayed>}
     {}
+
+    template<typename Argument>
+    AnyCallable &operator=(Argument &&a) noexcept(
+        noexcept(std::decay_t<Argument>(std::forward<Argument>(a)))
+    ) {
+        this->container()->destroy();
+        new(this) AnyCallable(std::forward<Argument>(a));
+        return *this;
+    }
 
     template<typename... RealArguments>
     R operator()(RealArguments &&... args) const {
@@ -107,7 +119,7 @@ private:
 
     template<typename T>
     static R invokeTarget(Args... as, TypeErasureProvider &obj) {
-        return (*obj.template state<T>())(as...);
+        return (*obj.template state<T>())(std::forward<Args>(as)...);
     }
 };
 
