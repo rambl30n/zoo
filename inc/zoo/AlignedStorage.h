@@ -100,6 +100,7 @@ void build(T &to, Args &&... args)
 
 }
 
+///! \note What about constructors and destructor?
 template<int S = VPSize, int A = VPAlignment>
 struct AlignedStorage {
     constexpr static auto Size = S, Alignment = A;
@@ -108,7 +109,6 @@ struct AlignedStorage {
 
     template<typename T>
     T *as() noexcept { return reinterpret_cast<T *>(&space_); }
-
     template<typename T>
     const T *as() const noexcept {
         return const_cast<AlignedStorage *>(this)->as<T>();
@@ -141,6 +141,9 @@ struct AlignedStorage {
         impl::destroy(*as<T>());
     }
 };
+
+template<typename V>
+using AlignedStorageFor = AlignedStorage<sizeof(V), alignof(V)>;
 
 }
 

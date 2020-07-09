@@ -1,5 +1,8 @@
 #include "AnyCallableGeneric.h"
 
+template<typename S>
+using Functor = zoo::AnyCallable<zoo::AnyContainer<zoo::CanonicalPolicy>, S>;
+
 TEST_CASE("function", "[any][type-erasure][functional]") {
-    CallableTests<zoo::AnyContainer<zoo::CanonicalPolicy>>::execute();
+    CallableTests<Functor>::execute();
 }

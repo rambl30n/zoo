@@ -1,6 +1,39 @@
 #include "GenericAnyTests.h"
 
 #include <zoo/ConverterAny.h>
+#include <zoo/AlignedStorage.h>
+
+struct PolymorphicBase {
+    virtual ~PolymorphicBase() {};
+    virtual int polymorphic();
+};
+
+struct PolymorphicDerived: PolymorphicBase {
+    int polymorphic() override {
+        new(this) PolymorphicBase;
+        return 2;
+    }
+};
+
+int PolymorphicBase::polymorphic() {
+    new(this) PolymorphicDerived;
+    return 1;
+}
+
+TEST_CASE("No need for launder") {
+    PolymorphicBase p;
+    auto total = p.polymorphic();
+    total += p.polymorphic(); // this call is undefined behavior
+    CHECK(2 == total);
+    zoo::AlignedStorageFor<PolymorphicBase> asfpb;
+    asfpb.build<PolymorphicBase>();
+    total = asfpb.as<PolymorphicBase>()->polymorphic();
+    auto *pointer = asfpb.as<PolymorphicBase>();
+    CHECK(typeid(PolymorphicDerived) == typeid(*pointer));
+    total += asfpb.as<PolymorphicBase>()->polymorphic();
+    asfpb.destroy<PolymorphicBase>();
+    CHECK(3 == total);
+}
 
 TEST_CASE("IAnyContainer") {
     using namespace zoo;
@@ -57,9 +90,12 @@ TEST_CASE("Resolved bugs") {
         CHECK(dynamic_cast<Base *>(&c));
         c.destroy();
     }
+    SECTION("Emplace infinite recursion") {
+        Any a;
+        a.emplace<int>(3);
+        REQUIRE(3 == *a.state<int>());
+    }
 }
-
-void debug() {};
 
 void canonicalOnlyTests() {
     SECTION("Copy constructor - value held is not an \"Any\"") {
@@ -96,4 +132,47 @@ TEST_CASE("AnyExtensions", "[contract]") {
     testAnyImplementation<
         zoo::AnyContainer<zoo::ConverterPolicy<8, 8>>
     >();
+}
+
+namespace pseudo_std {
+
+// swap2 simulates std::swap
+template<typename T>
+void swap2(T &t1, T &t2) { std::swap(t1, t2); }
+
+template<typename T>
+struct Container {
+    T t1_, t2_;
+    Container() { swap2(t1_, t2_); }
+    Container(T t1, T t2): t1_(t1), t2_(t2) { swap2(t1_, t2_); }
+};
+
+}
+
+namespace zoo {
+
+/* this would introduce an ambiguity:
+template<typename T>
+inline
+void swap2(T &t1, T &t2) { std::swap(t1, t2); }
+*/
+
+using pseudo_std::swap2;
+
+inline void swap2(Any &a1, Any &a2) { swap(a1, a2); }
+
+struct Derived: Any {};
+
+struct A { int value_; };
+
+}
+
+TEST_CASE("Example of swap ambiguity") {
+    pseudo_std::Container<zoo::Derived> usedToGiveError;
+    zoo::A a5{5}, a6{6};
+    pseudo_std::Container<zoo::A> swaps(a5, a6);
+    CHECK(swaps.t1_.value_ == 6);
+    CHECK(swaps.t2_.value_ == 5);
+    swap2(a5, a6);
+    CHECK(6 == a5.value_);
 }

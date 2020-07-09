@@ -9,7 +9,6 @@
 #include "catch2/catch.hpp"
 
 #include <type_traits>
-#include <vector>
 
 using namespace zoo;
 
@@ -25,6 +24,7 @@ using Big = AlignedStorage<2*VPSize>;
 static_assert(2*VPSize <= sizeof(Big), "larger size not honored");
 using A1 = AlignedStorage<1, 1>;
 static_assert(1 == sizeof(A1::space_), "specific size setting not honored");
+
 #ifdef __GNUC__
 #ifdef __clang__
 #pragma GCC diagnostic ignored "-Wgnu-alignof-expression"
@@ -107,7 +107,7 @@ static_assert(
 using A = AlignedStorage<>;
 
 static_assert(
-    noexcept(std::declval<A &>().build<Constructors, void *>(nullptr)),
+    noexcept(std::declval<A &>().build<Constructors>(nullptr)),
     "Failed to preserve noexceptness of constructor"
 );
 

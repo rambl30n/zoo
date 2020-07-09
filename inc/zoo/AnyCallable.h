@@ -103,10 +103,10 @@ struct AnyCallable<TypeErasureProvider, R(Args...)>: TypeErasureProvider {
     bool operator==(std::nullptr_t) const noexcept { return empty(); }
 
     bool operator!=(std::nullptr_t) const noexcept {
-        return not(*this == nullptr);
+        return !(*this == nullptr);
     }
 
-private:
+protected:
     template<typename E, typename S>
     friend inline
     void swap(AnyCallable<E, S> &, AnyCallable<E, S> &) noexcept;
